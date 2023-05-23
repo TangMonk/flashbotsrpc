@@ -5,11 +5,12 @@ import (
 	"crypto/ecdsa"
 	"encoding/json"
 	"fmt"
-	"io"
+	"io/ioutil"
 	"log"
 	"math/big"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/ethereum/go-ethereum/accounts"
@@ -56,6 +57,7 @@ type FlashbotsRPC struct {
 func New(url string, options ...func(rpc *FlashbotsRPC)) *FlashbotsRPC {
 	rpc := &FlashbotsRPC{
 		url:     url,
+		client:  http.DefaultClient,
 		log:     log.New(os.Stderr, "", log.LstdFlags),
 		Headers: make(map[string]string),
 		Timeout: 30 * time.Second,
@@ -63,9 +65,7 @@ func New(url string, options ...func(rpc *FlashbotsRPC)) *FlashbotsRPC {
 	for _, option := range options {
 		option(rpc)
 	}
-	rpc.client = &http.Client{
-		Timeout: rpc.Timeout,
-	}
+
 	return rpc
 }
 
@@ -116,8 +116,11 @@ func (rpc *FlashbotsRPC) Call(method string, params ...interface{}) (json.RawMes
 	for k, v := range rpc.Headers {
 		req.Header.Add(k, v)
 	}
+	httpClient := &http.Client{
+		Timeout: rpc.Timeout,
+	}
 
-	response, err := rpc.client.Do(req)
+	response, err := httpClient.Do(req)
 	if response != nil {
 		defer response.Body.Close()
 	}
@@ -125,7 +128,7 @@ func (rpc *FlashbotsRPC) Call(method string, params ...interface{}) (json.RawMes
 		return nil, err
 	}
 
-	data, err := io.ReadAll(response.Body)
+	data, err := ioutil.ReadAll(response.Body)
 	if err != nil {
 		return nil, err
 	}
@@ -179,8 +182,11 @@ func (rpc *FlashbotsRPC) CallWithFlashbotsSignature(method string, privKey *ecds
 	for k, v := range rpc.Headers {
 		req.Header.Add(k, v)
 	}
+	httpClient := &http.Client{
+		Timeout: rpc.Timeout,
+	}
 
-	response, err := rpc.client.Do(req)
+	response, err := httpClient.Do(req)
 	if response != nil {
 		defer response.Body.Close()
 	}
@@ -188,7 +194,7 @@ func (rpc *FlashbotsRPC) CallWithFlashbotsSignature(method string, privKey *ecds
 		return nil, err
 	}
 
-	data, err := io.ReadAll(response.Body)
+	data, err := ioutil.ReadAll(response.Body)
 	if err != nil {
 		return nil, err
 	}
@@ -708,10 +714,21 @@ func (rpc *FlashbotsRPC) FlashbotsSimulateBlock(privKey *ecdsa.PrivateKey, block
 
 // Sends a rawTx to the Flashbots relay. It will be sent to miners as bundle for 25 blocks, after which the transaction is failed.
 func (rpc *FlashbotsRPC) FlashbotsSendPrivateTransaction(privKey *ecdsa.PrivateKey, param FlashbotsSendPrivateTransactionRequest) (txHash string, err error) {
-	rawMsg, err := rpc.CallWithFlashbotsSignature("eth_sendPrivateTransaction", privKey, param)
+
+	var rawMsg json.RawMessage
+	if !strings.Contains(rpc.url, "flashbots") {
+		method := "eth_sendPrivateRawTransaction"
+		rawMsg, err = rpc.CallWithFlashbotsSignature(method, privKey, param.Tx)
+	} else {
+		method := "eth_sendPrivateTransaction"
+		rawMsg, err = rpc.CallWithFlashbotsSignature(method, privKey, param)
+	}
+
 	if err != nil {
+		fmt.Println(string(rawMsg), rpc.url)
 		return "", err
 	}
+
 	err = json.Unmarshal(rawMsg, &txHash)
 	return txHash, err
 }
