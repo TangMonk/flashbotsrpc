@@ -1,4 +1,4 @@
-module github.com/TangMonk/flashbotsrpc
+module github.com/TangMonk/flashbotsrpc-v2
 
 go 1.18
 
